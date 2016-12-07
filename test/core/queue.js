@@ -1,28 +1,28 @@
-var specHelper = require(__dirname + "/../_specHelper.js").specHelper;
+var specHelper = require(__dirname + '/../_specHelper.js').specHelper;
 var should = require('should');
 
 describe('queue', function(){
 
   var queue;
 
-  it("can connect", function(done){
+  it('can connect', function(done){
     queue = new specHelper.NR.queue({connection: specHelper.connectionDetails, queue: specHelper.queue});
-    queue.connect(function(){
+    queue.connect(function(error){
+      should.not.exist(error);
       should.exist(queue);
-      queue.end();
-      done();
+      queue.end(done);
     });
   });
 
-  it("can provide an error if connection failed", function(done) {
+  it('can provide an error if connection failed', function(done){
     // Only run this test if this is using real redis
-    if(process.env.FAKEREDIS == 'true') {
+    if(process.env.FAKEREDIS === 'true' || process.env.FAKEREDIS === true){
       return done();
     }
 
     var connectionDetails = {
       pkg:       specHelper.connectionDetails.pkg,
-      host:      "wronghostname",
+      host:      'wronghostname',
       password:  specHelper.connectionDetails.password,
       port:      specHelper.connectionDetails.port,
       database:  specHelper.connectionDetails.database,
@@ -36,8 +36,7 @@ describe('queue', function(){
 
     queue.on('error', function(error){
       error.message.should.match(/getaddrinfo ENOTFOUND/);
-      queue.end();
-      done();
+      queue.end(done);
     });
   });
 
@@ -63,42 +62,86 @@ describe('queue', function(){
     });
 
     it('can add a normal job', function(done){
-      queue.enqueue(specHelper.queue, 'someJob', [1,2,3], function(){
+      queue.enqueue(specHelper.queue, 'someJob', [1, 2, 3], function(){
         specHelper.popFromQueue(function(err, obj){
           should.exist(obj);
           obj = JSON.parse(obj);
-          obj.class.should.equal('someJob');
-          obj.args.should.eql([1,2,3]);
+          obj['class'].should.equal('someJob');
+          obj.args.should.eql([1, 2, 3]);
           done();
         });
       });
     });
 
     it('can add delayed job (enqueueAt)', function(done){
-      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1,2,3], function(){
-        specHelper.redis.zscore(specHelper.namespace + ":delayed_queue_schedule", "10", function(err, score){
-          String(score).should.equal("10");
-          specHelper.redis.lpop(specHelper.namespace + ":delayed:" + "10", function(err, obj){
+      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(error){
+        should.not.exist(error);
+        specHelper.redis.zscore(specHelper.namespace + ':delayed_queue_schedule', '10', function(err, score){
+          String(score).should.equal('10');
+          specHelper.redis.lpop(specHelper.namespace + ':delayed:' + '10', function(err, obj){
             should.exist(obj);
             obj = JSON.parse(obj);
-            obj.class.should.equal('someJob');
-            obj.args.should.eql([1,2,3]);
+            obj['class'].should.equal('someJob');
+            obj.args.should.eql([1, 2, 3]);
             done();
           });
         });
       });
     });
 
-    it('can add delayed job (enqueueIn)', function(done){
-      var now = Math.round( new Date().getTime() / 1000 ) + 5;
-      queue.enqueueIn(5 * 1000, specHelper.queue, 'someJob', [1,2,3], function(){
-        specHelper.redis.zscore(specHelper.namespace + ":delayed_queue_schedule", now, function(err, score){
-          String(score).should.equal(String(now));
-          specHelper.redis.lpop(specHelper.namespace + ":delayed:" + now, function(err, obj){
+    it('can add delayed job whose timestamp is a string (enqueueAt)', function(done){
+      queue.enqueueAt('10000', specHelper.queue, 'someJob', [1, 2, 3], function(error){
+        should.not.exist(error);
+        specHelper.redis.zscore(specHelper.namespace + ':delayed_queue_schedule', '10', function(err, score){
+          String(score).should.equal('10');
+          specHelper.redis.lpop(specHelper.namespace + ':delayed:' + '10', function(err, obj){
             should.exist(obj);
             obj = JSON.parse(obj);
-            obj.class.should.equal('someJob');
-            obj.args.should.eql([1,2,3]);
+            obj['class'].should.equal('someJob');
+            obj.args.should.eql([1, 2, 3]);
+            done();
+          });
+        });
+      });
+    });
+
+    it('will not enqueue a delayed job at the same time with matching params', function(done){
+      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(error){
+        should.not.exist(error);
+        queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(error){
+          String(error).should.equal('Error: Job already enqueued at this time with same arguments');
+          done();
+        });
+      });
+    });
+
+    it('can add delayed job (enqueueIn)', function(done){
+      var now = Math.round(new Date().getTime() / 1000) + 5;
+      queue.enqueueIn(5 * 1000, specHelper.queue, 'someJob', [1, 2, 3], function(){
+        specHelper.redis.zscore(specHelper.namespace + ':delayed_queue_schedule', now, function(err, score){
+          String(score).should.equal(String(now));
+          specHelper.redis.lpop(specHelper.namespace + ':delayed:' + now, function(err, obj){
+            should.exist(obj);
+            obj = JSON.parse(obj);
+            obj['class'].should.equal('someJob');
+            obj.args.should.eql([1, 2, 3]);
+            done();
+          });
+        });
+      });
+    });
+
+    it('can add a delayed job whose time is a string (enqueueIn)', function(done){
+      var now = Math.round(new Date().getTime() / 1000) + 5;
+      var time = 5 * 1000;
+      queue.enqueueIn(time.toString(), specHelper.queue, 'someJob', [1, 2, 3], function(){
+        specHelper.redis.zscore(specHelper.namespace + ':delayed_queue_schedule', now, function(err, score){
+          String(score).should.equal(String(now));
+          specHelper.redis.lpop(specHelper.namespace + ':delayed:' + now, function(err, obj){
+            should.exist(obj);
+            obj = JSON.parse(obj);
+            obj['class'].should.equal('someJob');
+            obj.args.should.eql([1, 2, 3]);
             done();
           });
         });
@@ -106,8 +149,8 @@ describe('queue', function(){
     });
 
     it('can get the number of jobs currently enqueued', function(done){
-      queue.enqueue(specHelper.queue, 'someJob', [1,2,3], function(){
-        queue.enqueue(specHelper.queue, 'someJob', [1,2,3], function(){
+      queue.enqueue(specHelper.queue, 'someJob', [1, 2, 3], function(){
+        queue.enqueue(specHelper.queue, 'someJob', [1, 2, 3], function(){
           queue.length(specHelper.queue, function(err, len){
             len.should.equal(2);
             done();
@@ -116,13 +159,13 @@ describe('queue', function(){
       });
     });
 
-    it ('can get the jobs in the queue', function(done){
-      queue.enqueue(specHelper.queue, 'someJob', [1,2,3], function(){
-        queue.enqueue(specHelper.queue, 'someJob', [4,5,6], function(){
+    it('can get the jobs in the queue', function(done){
+      queue.enqueue(specHelper.queue, 'someJob', [1, 2, 3], function(){
+        queue.enqueue(specHelper.queue, 'someJob', [4, 5, 6], function(){
           queue.queued(specHelper.queue, 0, -1, function(err, jobs){
             jobs.length.should.equal(2);
-            jobs[0].args.should.eql([1,2,3]);
-            jobs[1].args.should.eql([4,5,6]);
+            jobs[0].args.should.eql([1, 2, 3]);
+            jobs[1].args.should.eql([4, 5, 6]);
             done();
           });
         });
@@ -130,8 +173,8 @@ describe('queue', function(){
     });
 
     it('can find previously scheduled jobs', function(done){
-      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1,2,3], function(){
-        queue.scheduledAt(specHelper.queue, 'someJob', [1,2,3], function(err, timestamps){
+      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(){
+        queue.scheduledAt(specHelper.queue, 'someJob', [1, 2, 3], function(err, timestamps){
           timestamps.length.should.equal(1);
           timestamps[0].should.equal('10');
           done();
@@ -140,8 +183,8 @@ describe('queue', function(){
     });
 
     it('will not match previously scheduled jobs with differnt args', function(done){
-      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1,2,3], function(){
-        queue.scheduledAt(specHelper.queue, 'someJob', [3,2,1], function(err, timestamps){
+      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(){
+        queue.scheduledAt(specHelper.queue, 'someJob', [3, 2, 1], function(err, timestamps){
           timestamps.length.should.equal(0);
           done();
         });
@@ -149,10 +192,10 @@ describe('queue', function(){
     });
 
     it('can deleted an enqued job', function(done){
-      queue.enqueue(specHelper.queue, 'someJob', [1,2,3], function(){
+      queue.enqueue(specHelper.queue, 'someJob', [1, 2, 3], function(){
         queue.length(specHelper.queue, function(err, len){
           len.should.equal(1);
-          queue.del(specHelper.queue, 'someJob', [1,2,3], function(){
+          queue.del(specHelper.queue, 'someJob', [1, 2, 3], function(){
             queue.length(specHelper.queue, function(err, len){
               len.should.equal(0);
               done();
@@ -163,8 +206,8 @@ describe('queue', function(){
     });
 
     it('can deleted a delayed job', function(done){
-      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1,2,3], function(){
-        queue.delDelayed(specHelper.queue, 'someJob', [1,2,3], function(err, timestamps){
+      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(){
+        queue.delDelayed(specHelper.queue, 'someJob', [1, 2, 3], function(err, timestamps){
           timestamps.length.should.equal(1);
           timestamps[0].should.equal('10');
           done();
@@ -173,8 +216,8 @@ describe('queue', function(){
     });
 
     it('can delete a delayed job, and delayed queue should be empty', function(done){
-      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1,2,3], function(){
-        queue.delDelayed(specHelper.queue, 'someJob', [1,2,3], function(err, timestamps){
+      queue.enqueueAt(10000, specHelper.queue, 'someJob', [1, 2, 3], function(){
+        queue.delDelayed(specHelper.queue, 'someJob', [1, 2, 3], function(err, timestamps){
           queue.allDelayed(function(err, hash){
             hash.should.be.empty();
             timestamps.length.should.equal(1);
@@ -201,11 +244,11 @@ describe('queue', function(){
           len.should.equal(2);
           specHelper.popFromQueue(function(err, obj){
             obj = JSON.parse(obj);
-            obj.class.should.equal('noParams');
+            obj['class'].should.equal('noParams');
             obj.args.should.be.empty;
             specHelper.popFromQueue(function(err, obj){
               obj = JSON.parse(obj);
-              obj.class.should.equal('noParams');
+              obj['class'].should.equal('noParams');
               obj.args.should.be.empty;
               done();
             });
@@ -219,33 +262,47 @@ describe('queue', function(){
         queue.enqueue(specHelper.queue, 'noParams', [], function(){
           queue.length(specHelper.queue, function(err, len){
             len.should.equal(2);
-            queue.del(specHelper.queue, 'noParams');
-            queue.del(specHelper.queue, 'noParams', function(err, len){
-              queue.length(specHelper.queue, function(err, len){
+            queue.del(specHelper.queue, 'noParams', function(err, let){
+              should.not.exist(err);
+              len.should.equal(2);
+              queue.del(specHelper.queue, 'noParams', function(err, len){
+                should.not.exist(err);
                 len.should.equal(0);
-                done();
+                queue.length(specHelper.queue, function(err, len){
+                  len.should.equal(0);
+                  done();
+                });
               });
             });
           });
         });
-       });
+      });
     });
 
     it('allows omitting arguments when adding delayed job', function(done){
-      queue.allDelayed(function(err, hash){
+      queue.allDelayed(function(error, hash){
+        should.not.exist(error);
         hash.should.be.empty;
-        queue.enqueueAt(10000, specHelper.queue, 'noParams');
-        queue.enqueueIn(11000, specHelper.queue, 'noParams');
-        queue.enqueueAt(12000, specHelper.queue, 'noParams', function(){
-          queue.enqueueIn(13000, specHelper.queue, 'noParams', function(){
-            queue.scheduledAt(specHelper.queue, 'noParams', function(err, timestamps){
-              timestamps.length.should.equal(4);
-              queue.allDelayed(function(err, hash){
-                Object.keys(hash).length.should.equal(4);
-                for(var key in hash){
-                  hash[key][0].args.should.be.empty;
-                }
-                done();
+        queue.enqueueAt(10000, specHelper.queue, 'noParams', function(error){
+          should.not.exist(error);
+          queue.enqueueIn(11000, specHelper.queue, 'noParams', function(error){
+            should.not.exist(error);
+            queue.enqueueAt(12000, specHelper.queue, 'noParams', function(error){
+              should.not.exist(error);
+              queue.enqueueIn(13000, specHelper.queue, 'noParams', function(error){
+                should.not.exist(error);
+                queue.scheduledAt(specHelper.queue, 'noParams', function(error, timestamps){
+                  should.not.exist(error);
+                  timestamps.length.should.equal(4);
+                  queue.allDelayed(function(error, hash){
+                    should.not.exist(error);
+                    Object.keys(hash).length.should.equal(4);
+                    for(var key in hash){
+                      hash[key][0].args.should.be.empty;
+                    }
+                    done();
+                  });
+                });
               });
             });
           });
@@ -273,18 +330,59 @@ describe('queue', function(){
       });
     });
 
+    it('can load stats', function(done){
+      queue.connection.redis.set(specHelper.namespace + ':stat:failed', 1);
+      queue.connection.redis.set(specHelper.namespace + ':stat:processed', 2);
+      queue.stats(function(err, stats){
+        should.not.exist(err);
+        stats.processed.should.equal('2');
+        stats.failed.should.equal('1');
+        done();
+      });
+    });
+
+    describe('locks', function(){
+      beforeEach(function(done){ queue.connection.redis.set(queue.connection.key('lock:lists:queueName:jobName:[{}]'), 123, done); });
+      beforeEach(function(done){ queue.connection.redis.set(queue.connection.key('workerslock:lists:queueName:jobName:[{}]'), 456, done); });
+
+      afterEach(function(done){ queue.connection.redis.del(queue.connection.key('lock:lists:queueName:jobName:[{}]'), done); });
+      afterEach(function(done){ queue.connection.redis.del(queue.connection.key('workerslock:lists:queueName:jobName:[{}]'), done); });
+
+      it('can get locks', function(done){
+        queue.locks(function(err, locks){
+          should.not.exist(err);
+          Object.keys(locks).length.should.equal(2);
+          locks['lock:lists:queueName:jobName:[{}]'].should.equal('123');
+          locks['workerslock:lists:queueName:jobName:[{}]'].should.equal('456');
+          done();
+        });
+      });
+
+      it('can remove locks', function(done){
+        queue.locks(function(err, locks){
+          should.not.exist(err);
+          Object.keys(locks).length.should.equal(2);
+          queue.delLock('workerslock:lists:queueName:jobName:[{}]', function(err, count){
+            should.not.exist(err);
+            count.should.equal(1);
+            done();
+          });
+        });
+      });
+    });
+
     describe('failed job managment', function(){
 
       beforeEach(function(done){
 
-        var errorPayload = function(id){ 
+        var errorPayload = function(id){
           return JSON.stringify({
             worker: 'busted-worker-' + id,
             queue: 'busted-queue',
             payload: {
-              "class": 'busted_job',
+              'class': 'busted_job',
               queue: 'busted-queue',
-              args: [1,2,3]
+              args: [1, 2, 3]
             },
             exception: 'ERROR_NAME',
             error: 'I broke',
@@ -293,11 +391,11 @@ describe('queue', function(){
         };
 
         queue.connection.redis.rpush(queue.connection.key('failed'), errorPayload(1), function(){
-        queue.connection.redis.rpush(queue.connection.key('failed'), errorPayload(2), function(){
-        queue.connection.redis.rpush(queue.connection.key('failed'), errorPayload(3), function(){
-          done();
-        });
-        });
+          queue.connection.redis.rpush(queue.connection.key('failed'), errorPayload(2), function(){
+            queue.connection.redis.rpush(queue.connection.key('failed'), errorPayload(3), function(){
+              done();
+            });
+          });
         });
 
       });
@@ -311,28 +409,28 @@ describe('queue', function(){
       });
 
       it('can get the body content for a collection of failed jobs', function(done){
-        queue.failed(1,2, function(err, failedJobs){
+        queue.failed(1, 2, function(err, failedJobs){
           should.not.exist(err);
           failedJobs.length.should.equal(2);
-          
+
           failedJobs[0].worker.should.equal('busted-worker-2');
           failedJobs[0].queue.should.equal('busted-queue');
           failedJobs[0].exception.should.equal('ERROR_NAME');
           failedJobs[0].error.should.equal('I broke');
-          failedJobs[0].payload.args.should.eql([1,2,3]);
+          failedJobs[0].payload.args.should.eql([1, 2, 3]);
 
           failedJobs[1].worker.should.equal('busted-worker-3');
           failedJobs[1].queue.should.equal('busted-queue');
           failedJobs[1].exception.should.equal('ERROR_NAME');
           failedJobs[1].error.should.equal('I broke');
-          failedJobs[1].payload.args.should.eql([1,2,3]);
+          failedJobs[1].payload.args.should.eql([1, 2, 3]);
 
           done();
         });
       });
 
       it('can remove a failed job by payload', function(done){
-        queue.failed(1,1, function(err, failedJobs){
+        queue.failed(1, 1, function(err, failedJobs){
           failedJobs.length.should.equal(1);
           queue.removeFailed(failedJobs[0], function(err, removedJobs){
             should.not.exist(err);
@@ -346,12 +444,12 @@ describe('queue', function(){
       });
 
       it('can re-enqueue a specific job, removing it from the failed queue', function(done){
-        queue.failed(0,999, function(err, failedJobs){
+        queue.failed(0, 999, function(err, failedJobs){
           failedJobs.length.should.equal(3);
           failedJobs[2].worker.should.equal('busted-worker-3');
           queue.retryAndRemoveFailed(failedJobs[2], function(err, retriedJob){
             should.not.exist(err);
-            queue.failed(0,999, function(err, failedJobs){
+            queue.failed(0, 999, function(err, failedJobs){
               failedJobs.length.should.equal(2);
               failedJobs[0].worker.should.equal('busted-worker-1');
               failedJobs[1].worker.should.equal('busted-worker-2');
@@ -362,13 +460,13 @@ describe('queue', function(){
       });
 
       it('will return an error when trying to retry a job not in the failed queue', function(done){
-        queue.failed(0,999, function(err, failedJobs){
+        queue.failed(0, 999, function(err, failedJobs){
           failedJobs.length.should.equal(3);
           var failedJob = failedJobs[2];
           failedJob.worker = 'a-fake-worker';
           queue.retryAndRemoveFailed(failedJob, function(err, retriedJob){
             String(err).should.eql('Error: This job is not in failed queue');
-            queue.failed(0,999, function(err, failedJobs){
+            queue.failed(0, 999, function(err, failedJobs){
               failedJobs.length.should.equal(3);
               done();
             });
@@ -381,12 +479,12 @@ describe('queue', function(){
     describe('delayed status', function(){
 
       beforeEach(function(done){
-        queue.enqueueAt(10000, specHelper.queue, 'job1', [1,2,3], function(){
-        queue.enqueueAt(10000, specHelper.queue, 'job2', [1,2,3], function(){
-        queue.enqueueAt(20000, specHelper.queue, 'job3', [1,2,3], function(){
-          done();
-        });
-        });
+        queue.enqueueAt(10000, specHelper.queue, 'job1', [1, 2, 3], function(){
+          queue.enqueueAt(10000, specHelper.queue, 'job2', [1, 2, 3], function(){
+            queue.enqueueAt(20000, specHelper.queue, 'job3', [1, 2, 3], function(){
+              done();
+            });
+          });
         });
       });
 
@@ -404,12 +502,12 @@ describe('queue', function(){
         queue.delayedAt(10000, function(err, tasks_a){
           should.not.exist(err);
           tasks_a.length.should.equal(2);
-          tasks_a[0].class.should.equal('job1');
-          tasks_a[1].class.should.equal('job2');
+          tasks_a[0]['class'].should.equal('job1');
+          tasks_a[1]['class'].should.equal('job2');
           queue.delayedAt(20000, function(err, tasks_b){
             should.not.exist(err);
             tasks_b.length.should.equal(1);
-            tasks_b[0].class.should.equal('job3');
+            tasks_b[0]['class'].should.equal('job3');
             done();
           });
         });
@@ -434,7 +532,7 @@ describe('queue', function(){
       var timeout = 500;
 
       var jobs = {
-        "slowJob": {
+        'slowJob': {
           perform: function(callback){
             setTimeout(function(){
               callback(null);
@@ -460,21 +558,21 @@ describe('queue', function(){
         }, jobs);
 
         workerA.connect(function(){
-        workerB.connect(function(){
-
-          workerA.init(function(){
-          workerB.init(function(){
-            done();
-          }); });
-
-        }); });
+          workerB.connect(function(){
+            workerA.init(function(){
+              workerB.init(function(){
+                done();
+              });
+            });
+          });
+        });
       });
 
       afterEach(function(done){
         workerA.end(function(){
-        workerB.end(function(){
-          done();
-        });
+          workerB.end(function(){
+            done();
+          });
         });
       });
 
@@ -505,13 +603,13 @@ describe('queue', function(){
             data.should.containEql({'workerB': 'started'});
             var paylaod = data.workerA.payload;
             paylaod.queue.should.equal('test_queue');
-            paylaod.class.should.equal('slowJob');
+            paylaod['class'].should.equal('slowJob');
 
             done();
           });
         });
 
-        queue.enqueue(specHelper.queue, "slowJob");
+        queue.enqueue(specHelper.queue, 'slowJob');
         workerA.start();
       });
 
@@ -523,21 +621,20 @@ describe('queue', function(){
           queue.allWorkingOn(function(err, data){
             var paylaod = data.workerA.payload;
             paylaod.queue.should.equal('test_queue');
-            paylaod.class.should.equal('slowJob');
+            paylaod['class'].should.equal('slowJob');
 
             queue.cleanOldWorkers(age, function(err, data){
               should.not.exist(err);
               Object.keys(data).length.should.equal(1);
               data.workerA.queue.should.equal('test_queue');
               data.workerA.worker.should.equal('workerA');
-              data.workerA.payload.class.should.equal('slowJob');
-
-              specHelper.redis.rpop(specHelper.namespace + ":" + "failed", function(err, data){
+              data.workerA.payload['class'].should.equal('slowJob');
+              specHelper.redis.rpop(specHelper.namespace + ':' + 'failed', function(err, data){
                 data = JSON.parse(data);
                 data.queue.should.equal(specHelper.queue);
                 data.exception.should.equal('Worker Timeout (killed manually)');
                 data.error.should.equal('Worker Timeout (killed manually)');
-                data.payload.class.should.equal('slowJob');
+                data.payload['class'].should.equal('slowJob');
 
                 queue.allWorkingOn(function(err, data){
                   Object.keys(data).length.should.equal(1);
@@ -549,7 +646,7 @@ describe('queue', function(){
           });
         });
 
-        queue.enqueue(specHelper.queue, "slowJob");
+        queue.enqueue(specHelper.queue, 'slowJob');
         workerA.start();
       });
 
@@ -564,14 +661,14 @@ describe('queue', function(){
             queue.allWorkingOn(function(err, data){
               var paylaod = data.workerA.payload;
               paylaod.queue.should.equal('test_queue');
-              paylaod.class.should.equal('slowJob');
+              paylaod['class'].should.equal('slowJob');
 
               done();
             });
           });
         });
 
-        queue.enqueue(specHelper.queue, "slowJob");
+        queue.enqueue(specHelper.queue, 'slowJob');
         workerA.start();
       });
 

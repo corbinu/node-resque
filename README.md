@@ -1,6 +1,6 @@
 # node-resque
 
-**Distributed delayed jobs in nodejs**.  Resque is a background job system based on redis.  It includes priority queus, plugins, locking, delayed jobs, and more!  This project is a very opinionated but API-compatible with [Resque](https://github.com/resque/resque) and [Sidekiq](http://sidekiq.org/).  We also implement some of the popular Resque plugins, including [resque-scheduler](https://github.com/resque/resque-scheduler) and [resque-retry](https://github.com/lantins/resque-retry)
+**Distributed delayed jobs in nodejs**.  Resque is a background job system based on [Redis](http://redis.io) (version 2.0.0 and up required).  It includes priority queues, plugins, locking, delayed jobs, and more!  This project is a very opinionated but API-compatible with [Resque](https://github.com/resque/resque) and [Sidekiq](http://sidekiq.org/).  We also implement some of the popular Resque plugins, including [resque-scheduler](https://github.com/resque/resque-scheduler) and [resque-retry](https://github.com/lantins/resque-retry)
 
 [![Nodei stats](https://nodei.co/npm/node-resque.png?downloads=true)](https://npmjs.org/package/node-resque)
 
@@ -162,7 +162,7 @@ You can also pass redis client directly.
 var redisClient = new Redis();
 var connectionDetails = { redis: redisClient }
 
-var worker = new NR.worker({connection: connectionDetails, queues: 'math'}, jobs,
+var worker = new NR.worker({connection: connectionDetails, queues: 'math'}, jobs);
 
 worker.on('error', function(){
 	// handler errors
@@ -174,7 +174,7 @@ worker.connect(function(){
 ```
 
 ## Notes
-- Be sure to call `worker.end()`, `queue.end()` and `scheduler.end()` before shutting down your application if you want to properly clear your worker status from resque
+- Be sure to call `worker.end(callback)`, `queue.end(callback)` and `scheduler.end(callback)` before shutting down your application if you want to properly clear your worker status from resque
 - When ending your application, be sure to allow your workers time to finish what they are working on
 - This project implements the "scheduler" part of rescue-scheduler (the daemon which can promote enqueued delayed jobs into the work queues when it is time), but not the CRON scheduler proxy.  To learn more about how to use a CRON-like scheduler, read the [Job Schedules](#job-schedules) section of this document.
 - If you are using any plugins which effect `beforeEnqueue` or `afterEnqueue`, be sure to pass the `jobs` argument to the `new Queue` constructor
@@ -187,24 +187,37 @@ worker.connect(function(){
 var name = os.hostname() + ":" + process.pid + "+" + counter;
 var worker = new NR.worker({connection: connectionDetails, queues: 'math', 'name' : name}, jobs);
 ```
+
+###  worker#performInline
+
+**DO NOT USE THIS IN PRODUCTION**. In tests or special cases, you may want to process/work a job in-line. To do so, you can use `worker.performInline(jobName, arguments, callback)`.  If you are planning on running a job via #performInline, this worker should also not be started, nor should be using event emitters to monitor this worker.  This method will also not write to redis at all, including logging errors, modify resque's stats, etc.
+
 ## Queue Management
 
 Additional methods provided on the `queue` object:
 
-- **queue.prototype.queues** = function(callback)
+- **queue.stats** = function(callback)
+  - callback(error, stats_from_your_cluster)
+- **queue.queues** = function(callback)
   - callback(error, array_of_queues)
-- **queue.prototype.delQueue** = function(q, callback)
+- **queue.delQueue** = function(q, callback)
   - callback(error)
-- **queue.prototype.queued** = function(q, start, stop, callback)
+- **queue.queued** = function(q, start, stop, callback)
   - callback(error, jobs_in_queue)
-- **queue.prototype.length** = function(q, callback)
+- **queue.length** = function(q, callback)
   - callback(error, number_of_elements_in_queue)
-- **queue.prototype.del** = function(q, func, args, count, callback)
+- **queue.locks** = function(callback)
+  - callback(error, list_of_locks)
+- **queue.delLock** = function(lockName, callback)
   - callback(error, number_of_items_deleted)
-- **queue.prototype.delDelayed** = function(q, func, args, callback)
+- **queue.del** = function(q, func, args, count, callback)
+  - callback(error, number_of_items_deleted)
+- **queue.delDelayed** = function(q, func, args, callback)
   - callback(error, timestamps_the_job_was_removed_from)
-- **queue.prototype.scheduledAt** = function(q, func, args, callback)
+- **queue.scheduledAt** = function(q, func, args, callback)
   - callback(error, timestamps_the_job_is_scheduled_for)
+- **queue.end** = function(callback)
+  - callback(error)
 
 ## Delayed Status
 
@@ -243,6 +256,12 @@ You can work with these failed jobs with the following methods:
 - **queue.failed** = function(start, stop, callback)
   - callback(error, failedJobs)
   - `failedJobs` is an array listing the data of the failed jobs.  Each element looks like:
+
+### Failing a Job
+
+It is *very* important that your jobs handle uncaughtRejections and other errors of this type properly.  As of `node-resque` version 4, we no longer use `domains` to catch what would otherwise be crash-inducing errors in your jobs.  This means that a job which causes your application to crash WILL BE LOST FOREVER.  Please use `catch()` on your promises, handle all of your callbacks, and otherwise write robust node.js applications.
+
+If you choose to use `domains`, `process.onExit`, or any other method of "catching" a process crash, you can still move the job `node-resque` was working on to the redis error queue with `worker.fail(error, callback)`.  
 
 ```javascript
 { worker: 'busted-worker-3',
@@ -444,10 +463,12 @@ The Options available for the multiWorker are:
 - `maxTaskProcessors`: The maximum number of workers to spawn under this multiWorker, even if the queues are long and there is available CPU (the event loop isn't entierly blocked) to this node process.
 - `checkTimeout`: How often to check if the event loop is blocked (in ms) (for adding or removing multiWorker children),
 - `maxEventLoopDelay`: How long the event loop has to be delayed before considering it blocked (in ms),  
-- `toDisconnectProcessors`: If false, all multiWorker children will share a single redis connection.  If false, each child will connect and disconnect seperatly.  This will lead to more redis connections, but faster retrival of events.
+- `toDisconnectProcessors`: If false, all multiWorker children will share a single redis connection.  If true, each child will connect and disconnect seperatly.  This will lead to more redis connections, but faster retrival of events.
 
 ## Presentation
-This package was featured heavily in [this presentation I gave](http://blog.evantahler.com/blog/background-tasks-for-node.html) about background jobs + node.js.  It contains more examples!
+This package was featured heavily in [this presentation I gave](https://blog.evantahler.com/background-tasks-in-node-js-a-survey-with-redis-971d3575d9d2#.rzph5ofgy) about background jobs + node.js.  It contains more examples!
 
 ## Acknowledgments
-Most of this code was inspired by / stolen from [coffee-resque](https://npmjs.org/package/coffee-resque) and [coffee-resque-scheduler](https://github.com/leeadkins/coffee-resque-scheduler).  Thanks!
+- Most of this code was inspired by / stolen from [coffee-resque](https://npmjs.org/package/coffee-resque) and [coffee-resque-scheduler](https://github.com/leeadkins/coffee-resque-scheduler).  Thanks!
+- This Resque package aims to be fully compatible with [Ruby's Resque](https://github.com/resque/resque) and implamentations of [Resque Scheduler](https://github.com/resque/resque-scheduler).  Other packages from other langauges may conflict.
+- If you are looking for a UI to manage your Resque instances in nodejs, check out [ActionHero's Resque UI](https://github.com/evantahler/ah-resque-ui)
